@@ -27,18 +27,18 @@ type RefReply struct {
 	Clock   int                    `msgpack:"clock"`
 }
 
-// ----------------------- FIX para conversões numéricas -----------------------
+// -----------------------------------------------------------------------------
+// FIX PARA TIPOS -> int e string
+// -----------------------------------------------------------------------------
 func getInt(v interface{}) int {
 	switch x := v.(type) {
 	case int:
 		return x
-	case int8:
+	case int8, int16, int32, int64:
+		return int(fmt.Sprintf("%d", x)[0])
+	case float32:
 		return int(x)
-	case int16:
-		return int(x)
-	case int32:
-		return int(x)
-	case int64:
+	case float64:
 		return int(x)
 	case uint:
 		return int(x)
@@ -50,43 +50,53 @@ func getInt(v interface{}) int {
 		return int(x)
 	case uint64:
 		return int(x)
-	case float32:
-		return int(x)
-	case float64:
-		return int(x)
 	default:
 		return 0
 	}
 }
 
+func getString(v interface{}) string {
+	if v == nil {
+		return ""
+	}
+	switch x := v.(type) {
+	case string:
+		return x
+	case []byte:
+		return string(x)
+	default:
+		b, _ := json.Marshal(x)
+		return string(b)
+	}
+}
+
+// -----------------------------------------------------------------------------
+// VARIÁVEIS GLOBAIS
+// -----------------------------------------------------------------------------
 var (
-	serverName   string
-	serverRank   int
-	serverAddr   string
-	clock        int
-	clockMutex   sync.Mutex
-	coordMutex   sync.Mutex
-	coordinator  string
-	serversList  = map[string]map[string]interface{}{}
-	serversMutex sync.Mutex
+	serverName  string
+	serverRank  int
+	serverAddr  string
+	clock       int
+	clockMutex  sync.Mutex
+	coordMutex  sync.Mutex
+	coordinator string
 
 	pubSocket *zmq.Socket
 	repClient *zmq.Socket
+	repSrv    *zmq.Socket
+	reqMap    = map[string]*zmq.Socket{}
 
-	repSrv *zmq.Socket
-	reqMap = map[string]*zmq.Socket{}
+	serversMutex sync.Mutex
+	serversList  = map[string]map[string]interface{}{}
 
-	// persistence
-	messages            = []Envelope{}
-	msgCountSinceSync   = 0
-	msgCountSinceSyncMu sync.Mutex
+	// Persistência
+	messages []Envelope
 )
 
-// ----------------------- helpers -----------------------
-func logInfo(format string, a ...interface{}) { log.Printf("[INFO] "+format, a...) }
-func logWarn(format string, a ...interface{}) { log.Printf("[WARN] "+format, a...) }
-func logErr(format string, a ...interface{})  { log.Printf("[ERROR] "+format, a...) }
-
+// -----------------------------------------------------------------------------
+// CLOCK
+// -----------------------------------------------------------------------------
 func incClock() int {
 	clockMutex.Lock()
 	clock++
@@ -95,8 +105,8 @@ func incClock() int {
 	return v
 }
 
-func updateClock(recv interface{}) {
-	n := getInt(recv)
+func updateClock(v interface{}) {
+	n := getInt(v)
 	clockMutex.Lock()
 	if n > clock {
 		clock = n
@@ -107,61 +117,66 @@ func updateClock(recv interface{}) {
 
 func nowISO() string { return time.Now().UTC().Format(time.RFC3339) }
 
-// ----------------------- persistence -----------------------
+// -----------------------------------------------------------------------------
+// PERSISTÊNCIA
+// -----------------------------------------------------------------------------
 func saveJSON(path string, v interface{}) {
 	b, _ := json.MarshalIndent(v, "", "  ")
 	_ = ioutil.WriteFile(path, b, 0644)
 }
 
-func persistMessages() { saveJSON("data/messages.json", messages) }
-func loadMessages() {
-	b, err := ioutil.ReadFile("data/messages.json")
-	if err == nil {
-		_ = json.Unmarshal(b, &messages)
-	}
+func persistMessages() {
+	saveJSON("/app/data/messages.json", messages)
 }
 
-// ----------------------- REF interaction -----------------------
+func loadMessages() {
+	b, err := ioutil.ReadFile("/app/data/messages.json")
+	if err != nil || len(b) == 0 {
+		messages = []Envelope{}
+		return
+	}
+	_ = json.Unmarshal(b, &messages)
+}
+
+// -----------------------------------------------------------------------------
+// REF SERVER
+// -----------------------------------------------------------------------------
 func refRequest(req map[string]interface{}) (map[string]interface{}, error) {
+
 	ctx, _ := zmq.NewContext()
 	defer ctx.Term()
 	sock, _ := ctx.NewSocket(zmq.REQ)
 	defer sock.Close()
 
 	refAddr := os.Getenv("REF_ADDR")
-	if refAddr == "" {
-		return nil, fmt.Errorf("REF_ADDR missing")
-	}
-
 	sock.Connect(refAddr)
+
 	req["clock"] = incClock()
 
-	out, _ := msgpack.Marshal(map[string]interface{}{
+	packed, _ := msgpack.Marshal(map[string]interface{}{
 		"service": req["service"],
 		"data":    req,
 		"clock":   req["clock"],
 	})
 
-	if _, err := sock.SendBytes(out, 0); err != nil {
-		return nil, err
-	}
+	sock.SendBytes(packed, 0)
 
-	replyBytes, err := sock.RecvBytes(0)
+	raw, err := sock.RecvBytes(0)
 	if err != nil {
 		return nil, err
 	}
 
 	var rep RefReply
-	if err := msgpack.Unmarshal(replyBytes, &rep); err != nil {
-		return nil, err
-	}
+	msgpack.Unmarshal(raw, &rep)
 
 	updateClock(rep.Clock)
 
 	return rep.Data, nil
 }
 
-// ----------------------- server-to-server -----------------------
+// -----------------------------------------------------------------------------
+// SERVER-TO-SERVER
+// -----------------------------------------------------------------------------
 func ensureReqTo(addr string) (*zmq.Socket, error) {
 	if s, ok := reqMap[addr]; ok {
 		return s, nil
@@ -170,51 +185,48 @@ func ensureReqTo(addr string) (*zmq.Socket, error) {
 	ctx, _ := zmq.NewContext()
 	req, _ := ctx.NewSocket(zmq.REQ)
 	req.SetLinger(0)
-
-	if err := req.Connect(addr); err != nil {
-		return nil, err
-	}
+	req.Connect(addr)
 
 	reqMap[addr] = req
 	return req, nil
 }
 
 func sendSrvReq(addr string, service string, data map[string]interface{}, timeoutMs int) (map[string]interface{}, error) {
-	sock, err := ensureReqTo(addr)
-	if err != nil {
-		return nil, err
+
+	sock, _ := ensureReqTo(addr)
+
+	env := map[string]interface{}{
+		"service": service,
+		"data":    data,
+		"clock":   incClock(),
 	}
 
-	env := map[string]interface{}{"service": service, "data": data, "clock": incClock()}
 	out, _ := msgpack.Marshal(env)
-
-	if _, err := sock.SendBytes(out, 0); err != nil {
-		return nil, err
-	}
+	sock.SendBytes(out, 0)
 
 	poller := zmq.NewPoller()
 	poller.Add(sock, zmq.POLLIN)
 
-	socks, _ := poller.Poll(time.Duration(timeoutMs) * time.Millisecond)
-	if len(socks) == 0 {
+	res, _ := poller.Poll(time.Duration(timeoutMs) * time.Millisecond)
+	if len(res) == 0 {
 		return nil, fmt.Errorf("timeout")
 	}
 
-	msg, _ := sock.RecvBytes(0)
-	var rep map[string]interface{}
-	_ = msgpack.Unmarshal(msg, &rep)
+	raw, _ := sock.RecvBytes(0)
 
-	// update clock
-	if c, ok := rep["clock"]; ok {
-		updateClock(c)
-	}
+	var rep map[string]interface{}
+	msgpack.Unmarshal(raw, &rep)
+
+	updateClock(rep["clock"])
 
 	return rep, nil
 }
 
-// ----------------------- Election (Bully) -----------------------
+// -----------------------------------------------------------------------------
+// ELEIÇÃO (BULLY)
+// -----------------------------------------------------------------------------
 func startElection() {
-	logInfo("Iniciando eleição (Bully) — procurando servidores com rank maior...")
+	log.Printf("[INFO] Iniciando eleição Bully...")
 
 	serversMutex.Lock()
 	targets := []struct {
@@ -225,7 +237,7 @@ func startElection() {
 
 	for name, info := range serversList {
 		r := getInt(info["rank"])
-		addr := info["addr"].(string)
+		addr := getString(info["addr"])
 		if r > serverRank {
 			targets = append(targets, struct {
 				name string
@@ -243,24 +255,20 @@ func startElection() {
 
 	gotOK := false
 	for _, t := range targets {
-		logInfo("Enviando 'election' para %s (%s) rank=%d", t.name, t.addr, t.rank)
-
 		_, err := sendSrvReq(t.addr, "election", map[string]interface{}{"from": serverName}, 1500)
 		if err == nil {
 			gotOK = true
-			logInfo("Recebi OK de %s — desistindo de ser coordenador", t.name)
 			break
 		}
 	}
 
 	if !gotOK {
 		declareCoordinator(serverName)
-	} else {
-		logInfo("Aguardando anúncio do novo coordenador...")
 	}
 }
 
 func declareCoordinator(name string) {
+
 	coordMutex.Lock()
 	coordinator = name
 	coordMutex.Unlock()
@@ -274,19 +282,19 @@ func declareCoordinator(name string) {
 		},
 	}
 
-	out, _ := msgpack.Marshal(ann)
-	if pubSocket != nil {
-		pubSocket.SendMessage("servers", out)
-	}
+	packed, _ := msgpack.Marshal(ann)
+	pubSocket.SendMessage("servers", packed)
 
-	logInfo("🟡 Novo coordenador: %s", name)
+	log.Printf("🟡 Novo coordenador: %s", name)
 }
 
-// ----------------------- SUB listener -----------------------
+// -----------------------------------------------------------------------------
+// LISTENER SUB
+// -----------------------------------------------------------------------------
 func startSubListener(sub *zmq.Socket) {
 	for {
-		parts, err := sub.RecvMessageBytes(0)
-		if err != nil || len(parts) < 2 {
+		parts, _ := sub.RecvMessageBytes(0)
+		if len(parts) < 2 {
 			continue
 		}
 
@@ -302,38 +310,36 @@ func startSubListener(sub *zmq.Socket) {
 					coordMutex.Lock()
 					coordinator = coord
 					coordMutex.Unlock()
-					logInfo("📢 Novo coordenador recebido: %s", coord)
+					log.Printf("[INFO] 📢 Coordenador atualizado: %s", coord)
 				}
 			}
 		}
 	}
 }
 
-// ----------------------- Server-side REQ handler -----------------------
+// -----------------------------------------------------------------------------
+// SERVER REP LOOP (COMUNICAÇÃO ENTRE SERVERS)
+// -----------------------------------------------------------------------------
 func handleSrvReq(env Envelope) map[string]interface{} {
 	switch env.Service {
 
 	case "election":
-		logInfo("Recebi pedido de eleição de %v", env.Data["from"])
 		return map[string]interface{}{"election": "OK", "clock": incClock()}
 
 	case "clock":
 		return map[string]interface{}{"time": nowISO(), "clock": incClock()}
 
 	default:
-		return map[string]interface{}{"error": "unknown service", "clock": incClock()}
+		return map[string]interface{}{"error": "unknown", "clock": incClock()}
 	}
 }
 
-// ----------------------- Server REP loop -----------------------
 func startRepSrvLoop() {
 	for {
-		msg, err := repSrv.RecvBytes(0)
-		if err != nil {
-			continue
-		}
+		raw, _ := repSrv.RecvBytes(0)
+
 		var env Envelope
-		msgpack.Unmarshal(msg, &env)
+		msgpack.Unmarshal(raw, &env)
 
 		updateClock(env.Clock)
 
@@ -343,112 +349,114 @@ func startRepSrvLoop() {
 	}
 }
 
-// ----------------------- MAIN -----------------------
+// -----------------------------------------------------------------------------
+// MAIN
+// -----------------------------------------------------------------------------
 func main() {
+
 	rand.Seed(time.Now().UnixNano())
 
 	serverName = os.Getenv("SERVER_NAME")
 	if serverName == "" {
-		serverName = "server-" + fmt.Sprintf("%04d", rand.Intn(10000))
+		serverName = fmt.Sprintf("server-%04d", rand.Intn(10000))
 	}
 
 	serverAddr = os.Getenv("SERVER_ADDR")
-	if serverAddr == "" {
-		logErr("SERVER_ADDR ausente!")
-		os.Exit(1)
-	}
 
-	os.MkdirAll("data", 0755)
+	os.MkdirAll("/app/data", 0755)
 	loadMessages()
 
-	// ---------- ZMQ ----------
 	ctx, _ := zmq.NewContext()
 
+	// REP -> Broker
 	repClient, _ = ctx.NewSocket(zmq.REP)
 	repClient.Connect(os.Getenv("BROKER_DEALER_ADDR"))
 
+	// PUB -> Proxy
 	pubSocket, _ = ctx.NewSocket(zmq.PUB)
 	pubSocket.Connect(os.Getenv("PROXY_PUB_ADDR"))
 
+	// SUB -> Proxy
 	sub, _ := ctx.NewSocket(zmq.SUB)
 	sub.SetSubscribe("servers")
 	sub.Connect(os.Getenv("PROXY_SUB_ADDR"))
 	go startSubListener(sub)
 
+	// REP -> outros servers
 	repSrv, _ = ctx.NewSocket(zmq.REP)
 	repSrv.Bind(serverAddr)
 	go startRepSrvLoop()
 
-	// ---------- Register on REF ----------
-	refResp, err := refRequest(map[string]interface{}{"service": "rank", "user": serverName, "addr": serverAddr})
+	// REGISTRO REF
+	refResp, err := refRequest(map[string]interface{}{
+		"service": "rank",
+		"user":    serverName,
+		"addr":    serverAddr,
+	})
+
 	if err != nil {
-		logErr("Erro no REF: %v", err)
-		os.Exit(1)
+		log.Fatalf("Erro no REF: %v", err)
 	}
 
 	serverRank = getInt(refResp["rank"])
+	log.Printf("[INFO] Servidor iniciado: %s rank=%d", serverName, serverRank)
 
-	logInfo("Servidor iniciado → Nome=%s Rank=%d Addr=%s", serverName, serverRank, serverAddr)
-
-	// ---------- Get full server list ----------
+	// LIST SERVERS
 	listResp, _ := refRequest(map[string]interface{}{"service": "list"})
-
 	if l, ok := listResp["list"].([]interface{}); ok {
+
 		serversMutex.Lock()
 		for _, it := range l {
 			m := it.(map[string]interface{})
-			name := m["name"].(string)
-
+			name := getString(m["name"])
 			serversList[name] = map[string]interface{}{
 				"rank": getInt(m["rank"]),
-				"addr": m["addr"].(string),
+				"addr": getString(m["addr"]),
 			}
 		}
 		serversMutex.Unlock()
 	}
 
-	// ---------- Choose highest rank as coordinator ----------
-	{
-		highestName := serverName
-		highestRank := serverRank
+	// DEFINE COORDENADOR
+	bestName := serverName
+	bestRank := serverRank
 
-		serversMutex.Lock()
-		for name, info := range serversList {
-			r := getInt(info["rank"])
-			if r > highestRank {
-				highestRank = r
-				highestName = name
-			}
+	serversMutex.Lock()
+	for name, info := range serversList {
+		r := getInt(info["rank"])
+		if r > bestRank {
+			bestRank = r
+			bestName = name
 		}
-		coordinator = highestName
-		serversMutex.Unlock()
-
-		logInfo("Coordenador inicial definido: %s", coordinator)
 	}
+	serversMutex.Unlock()
 
-	// ---------- Heartbeat ----------
+	coordinator = bestName
+	log.Printf("[INFO] Coordenador inicial: %s", bestName)
+
+	// HEARTBEAT
 	go func() {
 		for {
-			refRequest(map[string]interface{}{"service": "heartbeat", "user": serverName, "addr": serverAddr})
+			refRequest(map[string]interface{}{
+				"service": "heartbeat",
+				"user":    serverName,
+				"addr":    serverAddr,
+			})
 			time.Sleep(5 * time.Second)
 		}
 	}()
 
-	// ---------- Coordinator liveness check ----------
+	// LIVENESS DO COORDENADOR
 	go func() {
 		for {
-			time.Sleep(4 * time.Second)
+			time.Sleep(3 * time.Second)
 
-			coordMutex.Lock()
-			current := coordinator
-			coordMutex.Unlock()
-
-			if current == serverName {
+			if coordinator == serverName {
 				continue
 			}
 
 			serversMutex.Lock()
-			info, ok := serversList[current]
+			info, ok := serversList[coordinator]
 			serversMutex.Unlock()
 
 			if !ok {
@@ -456,25 +464,25 @@ func main() {
 				continue
 			}
 
-			addr := info["addr"].(string)
+			addr := getString(info["addr"])
 
 			_, err := sendSrvReq(addr, "ping", map[string]interface{}{"from": serverName}, 1200)
 			if err != nil {
-				logWarn("Coordenador %s parece inativo. Iniciando eleição...", current)
+				log.Printf("[WARN] Coordenador %s caiu. Elegendo novo...", coordinator)
 				startElection()
 			}
 		}
 	}()
 
-	// ---------- MAIN CLIENT LOOP ----------
+	// MAIN LOOP -> CLIENTES E BOTS
 	for {
-		reqMsg, err := repClient.RecvMessageBytes(0)
+		msg, err := repClient.RecvMessageBytes(0)
 		if err != nil {
 			continue
 		}
 
 		var req Envelope
-		msgpack.Unmarshal(reqMsg[0], &req)
+		msgpack.Unmarshal(msg[0], &req)
 
 		updateClock(req.Clock)
 
@@ -486,13 +494,9 @@ func main() {
 		switch req.Service {
 
 		case "login":
-			user := ""
-			if v := req.Data["user"]; v != nil {
-				user = v.(string)
-			}
+			user := getString(req.Data["user"])
 			if user == "" {
 				resp["status"] = "erro"
-				resp["description"] = "usuário inválido"
 			} else {
 				resp["status"] = "sucesso"
 			}
@@ -501,7 +505,8 @@ func main() {
 			resp["channels"] = []string{"geral"}
 
 		case "publish":
-			ch := req.Data["channel"].(string)
+			ch := getString(req.Data["channel"])
+
 			env := Envelope{
 				Service: "publish",
 				Data: map[string]interface{}{
@@ -513,8 +518,8 @@ func main() {
 				Clock: incClock(),
 			}
 
-			packed, _ := msgpack.Marshal(env)
-			pubSocket.SendMessage(ch, packed)
+			raw, _ := msgpack.Marshal(env)
+			pubSocket.SendMessage(ch, raw)
 
 			messages = append(messages, env)
 			persistMessages()
@@ -522,7 +527,7 @@ func main() {
 			resp["status"] = "OK"
 
 		case "message":
-			dst := req.Data["dst"].(string)
+			dst := getString(req.Data["dst"])
 
 			env := Envelope{
 				Service: "message",
@@ -535,8 +540,8 @@ func main() {
 				Clock: incClock(),
 			}
 
-			packed, _ := msgpack.Marshal(env)
-			pubSocket.SendMessage(dst, packed)
+			raw, _ := msgpack.Marshal(env)
+			pubSocket.SendMessage(dst, raw)
 
 			messages = append(messages, env)
 			persistMessages()
@@ -548,7 +553,12 @@ func main() {
 			resp["message"] = "serviço desconhecido"
 		}
 
-		out, _ := msgpack.Marshal(map[string]interface{}{"service": req.Service, "data": resp, "clock": incClock()})
+		out, _ := msgpack.Marshal(map[string]interface{}{
+			"service": req.Service,
+			"data":    resp,
+			"clock":   incClock(),
+		})
+
 		repClient.SendBytes(out, 0)
 	}
 }

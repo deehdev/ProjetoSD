@@ -44,7 +44,7 @@ services:
       - chatnet
 
   # ----------------------
-  # Servidores
+  # Servidor A
   # ----------------------
   server_a:
     build: ./server
@@ -67,6 +67,9 @@ services:
     networks:
       - chatnet
 
+  # ----------------------
+  # Servidor B
+  # ----------------------
   server_b:
     build: ./server
     container_name: server_b
@@ -88,6 +91,9 @@ services:
     networks:
       - chatnet
 
+  # ----------------------
+  # Servidor C
+  # ----------------------
   server_c:
     build: ./server
     container_name: server_c
