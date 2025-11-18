@@ -1,5 +1,5 @@
 // =====================================================
-// CLIENTE INTERATIVO (REPL) — TOTALMENTE CORRIGIDO
+// CLIENTE INTERATIVO — REQ + SUB funcionando 100%
 // =====================================================
 
 const zmq = require("zeromq");
@@ -15,44 +15,100 @@ function incClock() {
   return clock;
 }
 function updateClock(received) {
+  received = Number(received) || 0;
   clock = Math.max(clock, received) + 1;
 }
 
 // -------------------------------
-// Conexão REQ → Broker
+// Endereços
 // -------------------------------
 const REQ_ADDR = process.env.REQ_ADDR || "tcp://broker:5555";
+const SUB_ADDR = process.env.SUB_ADDR || "tcp://proxy:5558";
+
+// -------------------------------
+// Sockets
+// -------------------------------
 const req = new zmq.Request();
+const sub = new zmq.Subscriber();
 
-let busy = false; // evita dois comandos ao mesmo tempo
+let busy = false;
+let currentUser = null;
 
-async function connect() {
-  await req.connect(REQ_ADDR);
-  console.log("📡 Conectado ao broker em", REQ_ADDR);
+// -------------------------------
+// Request helper
+// -------------------------------
+async function send(service, data = {}) {
+  if (busy) {
+    console.log("⚠ O socket ainda está ocupado.");
+    return;
+  }
+
+  busy = true;
+
+  data.timestamp = new Date().toISOString();
+  data.clock = incClock();
+
+  const env = { service, data };
+  await req.send(msgpack.encode(env));
+
+  const reply = await req.receive();
+  const decoded = msgpack.decode(reply[0]);
+
+  updateClock(decoded.data.clock);
+
+  busy = false;
+  return decoded;
 }
 
 // -------------------------------
-// Envio de mensagens
+// SUB Listener (mensagens recebidas)
 // -------------------------------
-async function send(service, data = {}) {
-  if (busy) throw new Error("O socket ainda está processando o comando anterior.");
-  busy = true;
+async function startSubListener() {
+  for await (const [topicBuf, msgBuf] of sub) {
+    try {
+      // Limpa tópico
+      let rawTopic = topicBuf.toString();
+      const topic = rawTopic.trim().replace(/[^a-zA-Z0-9_-]/g, "");
 
-  try {
-    data.timestamp = new Date().toISOString();
-    data.clock = incClock();
+      // Decodifica
+      const env = msgpack.decode(msgBuf);
+      const service = env.service;
+      const data = env.data || {};
 
-    const env = { service, data };
+      updateClock(data.clock);
 
-    await req.send(msgpack.encode(env));
-    const reply = await req.receive();
+      // Salva linha atual
+      const typed = rl.line;
+      readline.cursorTo(process.stdout, 0);
+      readline.clearLine(process.stdout, 0);
 
-    const decoded = msgpack.decode(reply[0]);
-    updateClock(decoded.data.clock);
+      // -----------------------
+      // FORMATAÇÃO DOS LOGS
+      // -----------------------
 
-    return decoded;
-  } finally {
-    busy = false;
+      if (service === "publish") {
+        console.log(
+          `💬  #${topic} | ${data.user} → ${data.message}`
+        );
+      }
+
+      else if (service === "message") {
+        console.log(
+          `📩  ${data.src} → você | ${data.message}`
+        );
+      }
+
+      else {
+        console.log(`🔧 [${topic}]`, env);
+      }
+
+      // Restaura prompt sem apagar o que o usuário digitou
+      rl.prompt(true);
+      process.stdout.write(typed);
+
+    } catch (e) {
+      console.log("Erro no SUB:", e);
+    }
   }
 }
 
@@ -62,13 +118,25 @@ async function send(service, data = {}) {
 async function cmdLogin(args) {
   const user = args[0];
   if (!user) return console.log("Uso: login <nome>");
-  console.log(await send("login", { user }));
+
+  const r = await send("login", { user });
+  console.log(r);
+
+  if (r.data.status === "sucesso") {
+    currentUser = user;
+
+    // Sempre ouvir o próprio nome
+    sub.subscribe(user);
+    console.log(`📡 Agora ouvindo mensagens privadas em: ${user}`);
+  }
 }
 
 async function cmdChannel(args) {
   const name = args[0];
   if (!name) return console.log("Uso: channel <nome>");
-  console.log(await send("channel", { channel: name }));
+
+  const r = await send("channel", { channel: name });
+  console.log(r);
 }
 
 async function cmdChannels() {
@@ -79,18 +147,48 @@ async function cmdUsers() {
   console.log(await send("users"));
 }
 
+async function cmdSubscribe(args) {
+  const topic = args[0];
+  if (!topic) return console.log("Uso: subscribe <canal>");
+
+  sub.subscribe(topic);
+  console.log(`📡 Agora ouvindo o tópico: ${topic}`);
+}
+
 async function cmdPublish(args) {
+  if (!currentUser) return console.log("Faça login primeiro.");
+
   const channel = args[0];
   const message = args.slice(1).join(" ");
-  if (!channel || !message) return console.log("Uso: publish <canal> <mensagem>");
-  console.log(await send("publish", { channel, message, user: "manual" }));
+
+  if (!channel || !message)
+    return console.log("Uso: publish <canal> <mensagem>");
+
+  const r = await send("publish", {
+    user: currentUser,
+    channel,
+    message,
+  });
+
+  console.log(r);
 }
 
 async function cmdMessage(args) {
+  if (!currentUser) return console.log("Faça login primeiro.");
+
   const dst = args[0];
   const message = args.slice(1).join(" ");
-  if (!dst || !message) return console.log("Uso: message <destino> <mensagem>");
-  console.log(await send("message", { src: "manual", dst, message }));
+
+  if (!dst || !message)
+    return console.log("Uso: message <destino> <mensagem>");
+
+  const r = await send("message", {
+    src: currentUser,
+    dst,
+    message,
+  });
+
+  console.log(r);
 }
 
 // -------------------------------
@@ -101,56 +199,56 @@ const commands = {
   channel: cmdChannel,
   channels: cmdChannels,
   users: cmdUsers,
+  subscribe: cmdSubscribe,
   publish: cmdPublish,
-  message: cmdMessage
+  message: cmdMessage,
 };
 
 // -------------------------------
-// REPL (com limpeza de caracteres invisíveis!)
+// REPL
 // -------------------------------
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
-  prompt: "> "
+  prompt: "> ",
 });
 
-async function startRepl() {
+// -------------------------------
+// Inicialização
+// -------------------------------
+(async () => {
+  await req.connect(REQ_ADDR);
+  console.log("📡 Conectado ao broker em", REQ_ADDR);
+
+  await sub.connect(SUB_ADDR);
+  console.log("📡 SUB conectado em", SUB_ADDR);
+
+  startSubListener();
+
   rl.prompt();
-
   rl.on("line", async (line) => {
-    // 🔥 CORREÇÃO CRÍTICA: remove lixo, tabs, \r, múltiplos espaços
     const clean = line.replace(/\s+/g, " ").trim();
-
-    if (!clean.length) {
-      console.log("Comando inválido.");
-      return rl.prompt();
+    if (!clean) {
+      rl.prompt();
+      return;
     }
 
     const tokens = clean.split(" ");
     const cmd = tokens[0].toLowerCase();
     const args = tokens.slice(1);
 
-    const handler = commands[cmd];
-
-    if (!handler) {
+    if (!commands[cmd]) {
       console.log("Comando desconhecido.");
-      return rl.prompt();
+      rl.prompt();
+      return;
     }
 
     try {
-      await handler(args); // garante ordem
+      await commands[cmd](args);
     } catch (e) {
       console.log("Erro:", e.message);
     }
 
     rl.prompt();
   });
-}
-
-// -------------------------------
-// Inicialização
-// -------------------------------
-(async () => {
-  await connect();
-  startRepl();
 })();

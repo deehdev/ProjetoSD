@@ -55,6 +55,7 @@ def send_req(sock, service, data=None, timeout=5.0):
     }
 
     encoded = msgpack.packb(env, use_bin_type=True)
+
     try:
         sock.send(encoded)
     except Exception as e:
@@ -90,60 +91,34 @@ def sub_listener(sub):
 
             svc = env.get("service", "")
             data = env.get("data", {})
-            ts = env.get("timestamp", "sem-timestamp")
-            clk = env.get("clock", "?")
+            ts = data.get("timestamp", "sem-timestamp")
+            clk = data.get("clock", "?")
 
-            # mensagens de canal
             if svc == "publish":
-                user = data.get("user") or data.get("src") or "?"
-                message = data.get("message") or data.get("msg") or ""
+                user = data.get("user") or "?"
+                msg = data.get("message") or ""
+                print(f"[{topic}] {user}: {msg} (ts={ts}, clk={clk})")
 
-                print(
-                    f"[{topic}] {user}: {message}  "
-                    f"(timestamp={ts}, clock={clk})"
-                )
-
-            # mensagens privadas
             elif svc == "message":
-                src = data.get("src") or data.get("user") or "?"
-                dst = topic
-                message = data.get("message") or data.get("msg") or ""
-
-                print(
-                    f"📩 {dst} recebeu mensagem PRIVADA de {src}: {message}  "
-                    f"(timestamp={ts}, clock={clk})"
-                )
-
-            # outros tópicos (election, replicate…)
-            else:
-                print(f"[{topic}][{svc}] {data}")
+                src = data.get("src") or "?"
+                msg = data.get("message") or ""
+                print(f"📩 PRIVADA de {src}: {msg} (ts={ts}, clk={clk})")
 
         except Exception as e:
             print("Erro no SUB:", e)
             time.sleep(0.5)
 
 # ---------------------------------------------------
-# HEARTBEAT
+# BOT
 # ---------------------------------------------------
-def heartbeat(username):
-    ctx = zmq.Context()
-    hb = ctx.socket(zmq.REQ)
-    hb.setsockopt(zmq.LINGER, 0)
-    hb.connect(REQ_ADDR)
-    time.sleep(0.05)
+def main():
+    NOMES = [
+        "Ana","Pedro","Rafael","Deise","Camila","Victor",
+        "Paula","Juliana","Lucas","Marcos","Mateus","João",
+        "Carla","Bruno","Renata","Sofia"
+    ]
 
-    while True:
-        try:
-            send_req(hb, "heartbeat", {"user": username}, timeout=2.0)
-        except Exception:
-            pass
-        time.sleep(5)
-
-# ---------------------------------------------------
-# FRASES / NOMES
-# ---------------------------------------------------
-def frase():
-    frases = [
+    FRASES = [
         "Alguém viu algum filme bom?",
         "Preciso de uma recomendação urgente.",
         "Esse mês saiu muito filme bom!",
@@ -153,88 +128,54 @@ def frase():
         "Alguém entendeu Tenet?",
         "Recomendações de terror psicológico?"
     ]
-    return random.choice(frases)
 
-NOMES = [
-    "Ana","Pedro","Rafael","Deise","Camila","Victor",
-    "Paula","Juliana","Lucas","Marcos","Mateus","João",
-    "Carla","Bruno","Renata","Sofia"
-]
-
-# ---------------------------------------------------
-# BOT
-# ---------------------------------------------------
-def main():
     username = random.choice(NOMES)
-    print(f"\nBOT iniciado como {username}\n")
+    print(f"BOT iniciado como {username}")
 
     ctx = zmq.Context()
-   
+
     req = ctx.socket(zmq.REQ)
     req.setsockopt(zmq.LINGER, 0)
     req.connect(REQ_ADDR)
-    time.sleep(0.05)
+    time.sleep(0.1)
 
     sub = ctx.socket(zmq.SUB)
     sub.setsockopt(zmq.LINGER, 0)
     sub.connect(SUB_ADDR)
-    time.sleep(0.05)
+    time.sleep(0.1)
 
     # LOGIN
     r = send_req(req, "login", {"user": username})
-    print("LOGIN:", r.get("data", {}).get("status", "erro"))
+    print("LOGIN:", r.get("data", {}).get("status"))
 
     # PRIVATE TOPIC
     sub.setsockopt_string(zmq.SUBSCRIBE, username)
 
-    threading.Thread(target=heartbeat, args=(username,), daemon=True).start()
-
-    # CANAIS
+    # LISTAR CANAIS
     r = send_req(req, "channels")
-    channels = r.get("data", {}).get("channels", [])
+    canais = r.get("data", {}).get("channels", [])
 
-    if not channels:
+    if not canais:
         send_req(req, "channel", {"channel": "geral"})
-        channels = ["geral"]
+        canais = ["geral"]
 
-    salas = random.sample(channels, 1)
+    escolhido = random.choice(canais)
+    sub.setsockopt_string(zmq.SUBSCRIBE, escolhido)
 
-    for c in salas:
-        sub.setsockopt_string(zmq.SUBSCRIBE, c)
-        send_req(req, "subscribe", {"user": username, "topic": c})
-
-    print("Canais inscritos:", salas)
+    print("Inscrito no canal:", escolhido)
 
     threading.Thread(target=sub_listener, args=(sub,), daemon=True).start()
 
-    # LOOP PRINCIPAL
     while True:
-
-        # 40% chance → PRIVADA
-        if random.random() < 0.40:
-            dst = random.choice([n for n in NOMES if n != username])
-            text = frase()
-
-            send_req(req, "message", {
-                "src": username,
-                "dst": dst,
-                "message": text
-            })
-
-            print(f"💌 {username} enviou mensagem Privada para {dst}: {text}")
-
-        # 60% chance → PUBLICAÇÃO
+        if random.random() < 0.4:
+            dest = random.choice([n for n in NOMES if n != username])
+            txt = random.choice(FRASES)
+            send_req(req, "message", {"src": username, "dst": dest, "message": txt})
+            print(f"💌 {username} → {dest}: {txt}")
         else:
-            canal = random.choice(salas)
-            text = frase()
-
-            send_req(req, "publish", {
-                "user": username,
-                "channel": canal,
-                "message": text
-            })
-
-            print(f"[{canal}] {username}: {text}")
+            txt = random.choice(FRASES)
+            send_req(req, "publish", {"user": username, "channel": escolhido, "message": txt})
+            print(f"[{escolhido}] {username}: {txt}")
 
         time.sleep(random.uniform(3, 6))
 
