@@ -449,104 +449,110 @@ func receberNotificacaoCoordenador(sub *zmq.Socket) {
 
 // ----------------------- election (Bully) -----------------------
 func startElection() {
-	// garantir que apenas UMA eleição rode por vez
-	emElectionMu.Lock()
-	if emElection {
-		emElectionMu.Unlock()
-		logInfo("Eleição já em andamento — ignorando nova requisição")
-		return
-	}
-	emElection = true
-	emElectionMu.Unlock()
+    // Garantir que apenas UMA eleição rode por vez
+    emElectionMu.Lock()
+    if emElection {
+        emElectionMu.Unlock()
+        logInfo("Eleição já em andamento — ignorando nova requisição")
+        return
+    }
+    emElection = true
+    emElectionMu.Unlock()
 
-	logInfo("Iniciando eleição Bully — procurando servidores com rank maior...")
+    logInfo("Iniciando eleição Bully — procurando servidores com rank maior...")
 
-	// 1) Encontrar servidores com rank maior
-	serversMutex.Lock()
-	var higher []struct {
-		name string
-		addr string
-		rank int
-	}
-	for name, info := range serversList {
-		r := getInt(info["rank"])
-		if r > meuRank {
-			higher = append(higher, struct {
-				name string
-				addr string
-				rank int
-			}{
-				name, getString(info["addr"]), r,
-			})
-		}
-	}
-	serversMutex.Unlock()
+    // 1) Encontrar servidores com rank MAIOR que eu
+    serversMutex.Lock()
+    var higher []struct {
+        name string
+        addr string
+        rank int
+    }
+    for name, info := range serversList {
+        r := getInt(info["rank"])
+        if r > meuRank {
+            higher = append(higher, struct {
+                name string
+                addr string
+                rank int
+            }{
+                name, getString(info["addr"]), r,
+            })
+        }
+    }
+    serversMutex.Unlock()
 
-	// 2) Se sou o maior → já ganhei
-	if len(higher) == 0 {
-		declareCoordinator(meuNome)
-		emElectionMu.Lock()
-		emElection = false
-		emElectionMu.Unlock()
-		return
-	}
+    // 2) Se sou o maior → ganho automaticamente
+    if len(higher) == 0 {
+        declareCoordinator(meuNome)
+        emElectionMu.Lock()
+        emElection = false
+        emElectionMu.Unlock()
+        return
+    }
 
-	// 3) Enviar "election" para todos maiores
-	gotOK := false
-	for _, h := range higher {
-		logInfo("Enviando election para %s (rank=%d)", h.name, h.rank)
-		_, err := sendSrvReq(h.addr, "election", map[string]interface{}{"from": meuNome}, 1500)
-		if err == nil {
-			gotOK = true
-			logInfo("%s respondeu OK — cedendo eleição", h.name)
-			break
-		}
-	}
+    // 3) Enviar "election" para todos maiores
+    gotOK := false
+    for _, h := range higher {
+        logInfo("Enviando election para %s (rank=%d)", h.name, h.rank)
 
-	// 4) Se ninguém respondeu → eu ganho
-	if !gotOK {
-		declareCoordinator(meuNome)
-		emElectionMu.Lock()
-		emElection = false
-		emElectionMu.Unlock()
-		return
-	}
+        _, err := sendSrvReq(h.addr, "election", map[string]interface{}{
+            "from": meuNome,
+        }, 1500)
 
-	// 5) Se alguém respondeu → aguardar anúncio real via SUB
-	logInfo("Aguardando anúncio do novo coordenador...")
+        if err == nil {
+            gotOK = true
+            logInfo("%s respondeu OK — cedendo eleição", h.name)
+            break
+        }
+    }
 
-	timeout := time.After(4 * time.Second)
-	for {
-		select {
-		case <-timeout:
-			logWarn("Timeout aguardando anúncio — reiniciando eleição")
-			emElectionMu.Lock()
-			emElection = false
-			emElectionMu.Unlock()
+    // 4) Se ninguém respondeu → eu ganho
+    if !gotOK {
+        declareCoordinator(meuNome)
+        emElectionMu.Lock()
+        emElection = false
+        emElectionMu.Unlock()
+        return
+    }
 
-			// REINICIA eleição sem recursão direta
-			go func() {
-				time.Sleep(500 * time.Millisecond)
-				startElection()
-			}()
-			return
+    // 5) Alguém maior respondeu → esperar anúncio oficial via SUB
+    logInfo("Aguardando anúncio do novo coordenador...")
 
-		default:
-			coordMutex.Lock()
-			c := coordinator
-			coordMutex.Unlock()
+    timeout := time.After(4 * time.Second)
+    ticker := time.NewTicker(150 * time.Millisecond)
 
-			// só sai quando receber anúncio de OUTRO coordenador
-			if c != "" && c != meuNome {
-				emElectionMu.Lock()
-				emElection = false
-				emElectionMu.Unlock()
-				return
-			}
+waitLoop:
+    for {
+        select {
+        case <-timeout:
+            // Timeout → reiniciar eleição
+            logWarn("Timeout aguardando anúncio — reiniciando eleição")
 
-			time.Sleep(120 * time.Millisecond)
-		}
-	}
+            emElectionMu.Lock()
+            emElection = false
+            emElectionMu.Unlock()
+
+            go func() {
+                time.Sleep(300 * time.Millisecond)
+                startElection()
+            }()
+            break waitLoop
+
+        case <-ticker.C:
+            coordMutex.Lock()
+            c := coordinator
+            coordMutex.Unlock()
+
+            if c != "" && c != meuNome {
+                // Recebi anúncio → eleição termina
+                emElectionMu.Lock()
+                emElection = false
+                emElectionMu.Unlock()
+                break waitLoop
+            }
+        }
+    }
 }
 
 // ----------------------- server-to-server handler (REP) -----------------------
@@ -589,30 +595,39 @@ func startRepSrvLoop() {
 
 // ----------------------- SUB listener (proxy) -----------------------
 func startSubListener(sub *zmq.Socket) {
-	for {
-		parts, err := sub.RecvMessageBytes(0)
-		if err != nil || len(parts) < 2 {
-			time.Sleep(50 * time.Millisecond)
-			continue
-		}
+    for {
+        parts, err := sub.RecvMessageBytes(0)
+        if err != nil || len(parts) < 2 {
+            time.Sleep(50 * time.Millisecond)
+            continue
+        }
 
-		topic := string(parts[0])
-		body := parts[1]
+        topic := string(parts[0])
+        body := parts[1]
 
-		switch topic {
-		case "servers":
-			var ann map[string]interface{}
-			_ = msgpack.Unmarshal(body, &ann)
+        switch topic {
+        case "servers":
+            var ann map[string]interface{}
+            _ = msgpack.Unmarshal(body, &ann)
 
-			if data, ok := ann["data"].(map[string]interface{}); ok {
-				if coord, ok := data["coordinator"].(string); ok {
-					coordMutex.Lock()
-					coordinator = coord
-					coordMutex.Unlock()
-					logInfo("📢 Novo coordenador recebido: %s", coord)
-				}
-			}
-		case "replicate":
+            if data, ok := ann["data"].(map[string]interface{}); ok {
+                if coord, ok := data["coordinator"].(string); ok {
+
+                    // Atualiza coordenador
+                    coordMutex.Lock()
+                    coordinator = coord
+                    coordMutex.Unlock()
+
+                    // ENCERRA ELEIÇÃO
+                    emElectionMu.Lock()
+                    emElection = false
+                    emElectionMu.Unlock()
+
+                    logInfo("📢 Novo coordenador recebido: %s", coord)
+                }
+            }
+
+  		case "replicate":
 			var r map[string]interface{}
 			_ = msgpack.Unmarshal(body, &r)
 
@@ -786,6 +801,33 @@ func main() {
 			time.Sleep(5 * time.Second)
 		}
 	}()
+		// sincronizar lista de servidores com REF a cada 5s
+go func() {
+    for {
+        time.Sleep(5 * time.Second)
+
+        listResp, err := refRequest(map[string]interface{}{"service": "list"})
+        if err != nil {
+            continue
+        }
+
+        if l, ok := listResp["list"].([]interface{}); ok {
+            serversMutex.Lock()
+            updated := map[string]map[string]interface{}{}
+            for _, it := range l {
+                if m, ok2 := it.(map[string]interface{}); ok2 {
+                    name := getString(m["name"])
+                    updated[name] = map[string]interface{}{
+                        "rank": getInt(m["rank"]),
+                        "addr": getString(m["addr"]),
+                    }
+                }
+            }
+            serversList = updated
+            serversMutex.Unlock()
+        }
+    }
+}()
 
 	// monitor coordinator liveness
 	go func() {
