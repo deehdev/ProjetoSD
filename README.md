@@ -37,6 +37,10 @@ A arquitetura é composta por **9 containers**, todos conectados através do Doc
 ## 🧱 **Estrutura Completa**
 <img width="696" height="487" alt="image" src="https://github.com/user-attachments/assets/daa6aa69-1029-41f3-9500-d714b6a7e3a6" />
 
+
+
+
+
 ---
 </div>
 
@@ -140,7 +144,21 @@ O projeto adota replicação ativa via difusão usando PUB/SUB do ZeroMQ, esse m
 - A cada 10 mensagens → sincronização de relógio físico  
 - `docker stop server_c`  
 - Veja outro servidor ser eleito coordenador.
+  
+<img width="692" height="360" alt="image" src="https://github.com/user-attachments/assets/e33b6228-7dc9-4a2d-95d3-8ebc31e04b13" />
 
+ 
+<img width="698" height="348" alt="image" src="https://github.com/user-attachments/assets/770a3f40-3597-4895-abbc-b748619fdfd0" />
+
+ 
+<img width="1231" height="351" alt="image" src="https://github.com/user-attachments/assets/76655699-540e-46ac-ad59-1b0b87914254" />
+
+ 
+<img width="1324" height="333" alt="image" src="https://github.com/user-attachments/assets/a7a57ac8-bbdd-4aaf-b06f-4190fa888424" />
+
+
+
+<img width="1181" height="160" alt="image" src="https://github.com/user-attachments/assets/55238dc1-1ea8-49be-adc9-594b024a5b83" />
 
 ## 🚀 Como Executar
 
@@ -171,6 +189,30 @@ node client.js<br>
 | `publish <canal> <msg>` | Publica uma mensagem em um canal       |
 | `message <user> <msg>`  | Envia uma mensagem privada a um usuário |
 
+ **Login**
+ 
+<img width="634" height="173" alt="image" src="https://github.com/user-attachments/assets/0da1b852-455e-465f-b1b4-ac8a4e5ae34c" />
+
+**users**
+
+<img width="578" height="225" alt="image" src="https://github.com/user-attachments/assets/7306d17d-5b97-4040-83af-a4475b8159a9" />
+
+**channel**
+
+<img width="600" height="124" alt="image" src="https://github.com/user-attachments/assets/20750926-6808-4513-9596-9058f11f3c9a" />
+
+**channels**
+
+<img width="592" height="165" alt="image" src="https://github.com/user-attachments/assets/096de960-cb12-4f67-b6c6-c35cc80295a0" />
+
+**message**
+
+<img width="1324" height="333" alt="image" src="https://github.com/user-attachments/assets/4c578419-fdd7-49ce-9d2a-47975b5ce582" />
+
+**subscribe**
+
+<img width="560" height="364" alt="image" src="https://github.com/user-attachments/assets/0194224e-8709-4c93-8b09-e2a7870b02db" />
+
 ---
 
 ## 🔍 Ver Logs dos Servidores
@@ -184,7 +226,7 @@ docker-compose up
 
 # 🔍 Ver Logs dos Servidores
 
-```bash
+
 // Construir o ambiente
 docker-compose build
 
@@ -195,7 +237,6 @@ docker-compose up
 ## 🤖 Bots Automáticos
 
 **O que fazem os bots:**
-
 - Criam um usuário aleatório  
 - Escolhem um canal  
 - Enviam mensagens aleatórias  
