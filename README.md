@@ -1,3 +1,4 @@
+
 <div align="center">
 
 # 💬 **Sistema Distribuído de Troca de Mensagens**
@@ -178,9 +179,9 @@ Se quiser, posso adicionar exemplos de uso ou melhorar o estilo!
 
 ## 🔍 Ver Logs dos Servidores
 
-# Construir o ambiente
+-Construir o ambiente
 docker-compose build
-# Subir os contêineres
+- Subir os contêineres
 docker-compose up
 
 ## 🤖 Bots<br>
@@ -200,7 +201,7 @@ docker-compose up
 - Expira servidores inativos
 - Fornece lista de servidores
 - 
-# ⏱ Relógio Lógico (Lamport)
+## ⏱ Relógio Lógico (Lamport)
 
 Toda mensagem enviada possui campo:
 ```json
@@ -221,16 +222,16 @@ Envia ajustes
 Sincroniza a cada 10 mensagens
 Se coordenador falhar → eleição ocorre.
 
-👤 Autor: Deise Adriana Silva Araújo.<br>
+## 👤 Autor: Deise Adriana Silva Araújo.<br>
 Projeto desenvolvido para a disciplina
 CC7261 — Sistemas Distribuídos
 Entregue como solução completa das Partes 1 a 5.<br>
 <br>
 
-<div align="center">
-⭐ Se este repositório te ajudou, considere deixar uma estrela!
-</div> ```
+## 🤝 Contribuição
 
+Contribuições são bem-vindas!
+Faça um fork do projeto, crie uma branch e abra um Pull Request.
 
 
 
