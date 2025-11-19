@@ -144,6 +144,10 @@ O projeto adota replicação ativa via difusão usando PUB/SUB do ZeroMQ, esse m
 - A cada 10 mensagens → sincronização de relógio físico  
 - `docker stop server_c`  
 - Veja outro servidor ser eleito coordenador.
+<img width="692" height="360" alt="image" src="https://github.com/user-attachments/assets/e33b6228-7dc9-4a2d-95d3-8ebc31e04b13" />
+<img width="698" height="348" alt="image" src="https://github.com/user-attachments/assets/770a3f40-3597-4895-abbc-b748619fdfd0" />
+<img width="1231" height="351" alt="image" src="https://github.com/user-attachments/assets/76655699-540e-46ac-ad59-1b0b87914254" />
+
 
 
 ## 🚀 Como Executar
@@ -175,6 +179,16 @@ node client.js<br>
 | `publish <canal> <msg>` | Publica uma mensagem em um canal       |
 | `message <user> <msg>`  | Envia uma mensagem privada a um usuário |
 
+<img width="634" height="173" alt="image" src="https://github.com/user-attachments/assets/0da1b852-455e-465f-b1b4-ac8a4e5ae34c" />
+<img width="578" height="225" alt="image" src="https://github.com/user-attachments/assets/7306d17d-5b97-4040-83af-a4475b8159a9" />
+<img width="600" height="124" alt="image" src="https://github.com/user-attachments/assets/20750926-6808-4513-9596-9058f11f3c9a" />
+<img width="592" height="165" alt="image" src="https://github.com/user-attachments/assets/096de960-cb12-4f67-b6c6-c35cc80295a0" />
+<img width="560" height="364" alt="image" src="https://github.com/user-attachments/assets/0194224e-8709-4c93-8b09-e2a7870b02db" />
+
+
+
+
+
 ---
 
 ## 🔍 Ver Logs dos Servidores
@@ -199,7 +213,6 @@ docker-compose up
 ## 🤖 Bots Automáticos
 
 **O que fazem os bots:**
-
 - Criam um usuário aleatório  
 - Escolhem um canal  
 - Enviam mensagens aleatórias  
