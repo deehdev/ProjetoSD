@@ -139,32 +139,32 @@ O projeto adota replicação ativa via difusão usando PUB/SUB do ZeroMQ, esse m
 ---
 
 ## 👑 Eleição (Bully) + Sincronização Berkeley
-```bash
-- O maior rank vence a eleição.
-- Coordenador divulga no tópico servers
-- A cada 10 mensagens → sincronização de relógio físico</div>
-- docker stop server_c
-- Veja outro servidor ser eleito coordenador.<br>
+- O maior rank vence a eleição.  
+- Coordenador divulga no tópico `servers`  
+- A cada 10 mensagens → sincronização de relógio físico  
+- `docker stop server_c`  
+- Veja outro servidor ser eleito coordenador.
 
----
-<h2>🚀 **Como Executar** (H2)</h2>
 
-# Construir o ambiente
+## 🚀 Como Executar
+
+//Construir o ambiente<br>
 docker-compose build
 
-# Subir os contêineres
+//Subir os contêineres<br>
 docker-compose up
+
 
 
 ## 🖥 Acessar Cliente
 
-docker exec -it client bash ou
-docker compose run --rm client
-node client.js
+docker exec -it client bash ou<br>
+docker compose run --rm client<br>
+node client.js<br>
 ---
 
 ## 💻 Comandos do Cliente
-```
+
 | Comando                 | Função                                |
 |-------------------------|----------------------------------------|
 | `login <nome>`          | Faz login                              |
@@ -175,14 +175,23 @@ node client.js
 | `publish <canal> <msg>` | Publica uma mensagem em um canal       |
 | `message <user> <msg>`  | Envia uma mensagem privada a um usuário |
 
-Se quiser, posso adicionar exemplos de uso ou melhorar o estilo!
+---
+
+## 🔍 Ver Logs dos Servidores
+
+```bash
+# Construir o ambiente
+docker-compose build
+
+# Subir os contêineres
+docker-compose up
 
 ## 🔍 Ver Logs dos Servidores
 
 -Construir o ambiente
-docker-compose build
+**docker-compose build**
 - Subir os contêineres
-docker-compose up
+**docker-compose up**
 
 ## 🤖 Bots<br>
 **Bots automáticos:** :
@@ -193,57 +202,51 @@ docker-compose up
 
 ## 🧩 **6. Servidor de Referência (Go)**
 - Armazena:
-  - nomes
+  - nomes dos servidores
   - Endereços
   - ranks
 - Entrega rank ao servidor
 - Monitora heartbeat
 - Expira servidores inativos
-- Fornece lista de servidores
-- 
+- Fornece lista de ranks 
+- Elege o coordenador
+  
 ## ⏱ Relógio Lógico (Lamport)
 
-Toda mensagem enviada possui campo:
-```json
 "clock": <contador lógico>
+
 **Regras:**
-Antes de enviar → clock++
-Ao receber → clock = max(local, recebido) + 1
+- Antes de enviar → `clock++`  
+- Ao receber → `clock = max(local, recebido) + 1`
+
 **Garantias:**
-✔ Ordenação causal
-✔ Replicações consistentes
+✔ Ordenação causal  
+✔ Replicações consistentes  
 ✔ Logs persistidos na mesma ordem em todos os servidores
+---
 
 ## 🕒 Sincronização do Relógio Físico (Algoritmo de Berkeley)
 
-O coordenador consulta outros servidores
-Calcula média dos desvios
-Envia ajustes
-Sincroniza a cada 10 mensagens
-Se coordenador falhar → eleição ocorre.
+- O coordenador consulta outros servidores  
+- Calcula média dos desvios  
+- Envia ajustes  
+- Sincroniza a cada 10 mensagens  
+- Se coordenador falhar → eleição ocorre.
+---
 
-## 👤 Autor: Deise Adriana Silva Araújo.<br>
-Projeto desenvolvido para a disciplina
-CC7261 — Sistemas Distribuídos
-Entregue como solução completa das Partes 1 a 5.<br>
-<br>
+## 👤 Autor: Deise Adriana Silva Araújo
+
+Projeto desenvolvido para a disciplina  
+CC7261 — Sistemas Distribuídos  
+Entregue como solução completa das Partes 1 a 5.
+
+---
 
 ## 🤝 Contribuição
 
-Contribuições são bem-vindas!
-Faça um fork do projeto, crie uma branch e abra um Pull Request.
+Contribuições são bem-vindas!  
 
 
-
-
-
-
-
-
-
-
-<h1 align="center">💬 Sistema Distribuído de Mensagens</h1>
-<h3 align="center">ZeroMQ • MessagePack • Docker • Go</h3>
 
 
 
