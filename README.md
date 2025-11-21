@@ -1,12 +1,16 @@
-
 <div align="center">
 
 # 💬 **Sistema Distribuído de Troca de Mensagens**
+
 ### **ZeroMQ • MessagePack • Lamport Clock • Eleição Bully • Berkeley Sync • Docker*
 
+📡 Mensagens privadas<br>
+📨 Canais públicos<br>
+🤖 Bots automáticos<br>
+🔁 Replicação<br>
+⏱ Sincronização  
 
-📡 Mensagens privadas — 📨 Canais públicos — 🤖 Bots automáticos — 🔁 Replicação — ⏱ Sincronização  
-**Projeto completo para a disciplina BCSL502 – Sistemas Distribuídos**
+**Projeto completo para a disciplina CC7261 – Sistemas Distribuídos**
 
 ---
 
@@ -14,14 +18,28 @@
 
 ## 🌐 **Visão Geral**
 
-Este projeto implementa um sistema distribuído robusto inspirado em IRC/BBS, permitindo:
+Este documento apresenta o projeto de um sistema distribuído simplificado para troca de mensagens, inspirado em plataformas clássicas como BBS (Bulletin Board System) e IRC (Internet Relay Chat).
+O sistema foi desenvolvido como parte da disciplina de Sistemas Distribuídos, com foco nos principais desafios de comunicação distribuída, coordenação, consistência e tolerância a falhas.
 
-- Comunicação em tempo real  
-- Replicação ativa entre servidores  
-- Balanceamento via broker  
-- Sincronização de relógios  
-- Persistência em disco  
-- Tolerância a falhas com eleição automática  
+O projeto implementa:
+
+Comunicação em tempo real
+Interação entre múltiplos clientes via canais públicos e mensagens privadas, utilizando ZeroMQ com PUB/SUB e REQ/REP.
+
+Replicação ativa entre servidores
+Cada alteração de estado (usuário, canal, mensagem) é replicada para todos os servidores, garantindo consistência eventual e evitando perda de dados.
+
+Balanceamento de carga via broker
+Um broker intermediário distribui as requisições dos clientes entre os servidores utilizando round-robin, aumentando escalabilidade e disponibilidade.
+
+Sincronização de relógios
+Implementação de relógios lógicos e sincronização periódica usando o algoritmo de Berkeley para alinhamento temporal.
+
+Persistência em disco
+Todo o estado relevanteu: suários, canais, mensagens e metadados—é armazenado localmente em arquivos JSON para permitir recuperação após reinicialização.
+
+Tolerância a falhas com eleição automática
+Servidores monitoram uns aos outros via heartbeat e realizam eleição automática (sem líder fixo) para determinar o coordenador responsável pelo clock centralizado.
 
 A arquitetura é composta por **9 containers**, todos conectados através do Docker Compose:
 
@@ -36,9 +54,6 @@ A arquitetura é composta por **9 containers**, todos conectados através do Doc
 
 ## 🧱 **Estrutura Completa**
 <img width="696" height="487" alt="image" src="https://github.com/user-attachments/assets/daa6aa69-1029-41f3-9500-d714b6a7e3a6" />
-
-
-
 
 
 ---
@@ -59,16 +74,101 @@ A arquitetura é composta por **9 containers**, todos conectados através do Doc
 | **Docker Compose** | Orquestração dos 9 containers |
 
 ---
+## ⚙️ Funcionalidades Implementadas
+### — Request/Reply
 
-## 🗄 **Persistência**
+Implementado com **ZeroMQ REQ/REP**:
 
-Cada servidor salva seus dados em:
+- Login  
+- Listagem de usuários  
+- Criação de canais  
+- Listagem de canais  
+- Persistência dos dados em disco  
 
-<img width="226" height="225" alt="image" src="https://github.com/user-attachments/assets/b9e066cd-9688-4d51-a1d3-2b6010b350af" />
+---
 
-          
+### — PUB/SUB
 
-Com:
+Implementado com **Proxy (XSUB/XPUB)**:
+
+- Publicações em canais  
+- Mensagens privadas  
+- **Bot automático (Python)** que:
+  - loga com nome aleatório  
+  - envia mensagens para canais aleatórios  
+
+---
+
+### — MessagePack
+
+- Todas as mensagens **clientes ↔ servidores** agora são **binárias (msgpack)**.
+
+---
+
+### — Relógios Lógicos
+
+Todos os processos (clientes, bots e servidores) utilizam um relógio lógico para organizar a ordem das mensagens:
+Um contador inicia junto com o processo.
+Antes do envio de cada mensagem, o contador é incrementado.
+O contador é enviado junto com a mensagem.
+Ao receber uma mensagem, o processo compara o seu contador com o valor recebido e atualiza seu contador para o máximo entre os dois.
+Dessa forma, todas as mensagens possuem:
+ - Timestamp
+Valor do relógio lógico do remetente
+Isso garante consistência parcial na ordenação de eventos distribuídos.
+
+### Implementação do relógio lógico em:
+
+- **Servidores (Go)**
+- **Clientes (Node)**
+- **Bots (Python)**
+- **Servidor de referência (Go)**
+
+### Regras implementadas:
+
+- Incremento **antes de enviar**  
+- `max(local, recebido) + 1` **ao receber**
+
+---
+
+### — Servidor de Referência (rank + heartbeat)
+
+**Algoritmo de Berkeley**
+O sistema utiliza um servidor mestre (coordenador) como referência de tempo para sincronizar todos os servidores. O processo segue os seguintes passos:
+O mestre consulta periodicamente todos os servidores sobre seus relógios locais.
+Cada servidor responde com o seu horário atual.
+O mestre calcula a média dos relógios (ou aplica outro critério de compensação).
+O mestre envia para cada servidor a diferença (offset) que deve ser aplicada ao seu relógio local.
+Cada servidor ajusta seu relógio conforme o offset recebido.
+Objetivo: manter todos os relógios dos servidores aproximadamente sincronizados, garantindo que a ordem das operações siga o tempo lógico, sem depender de um relógio físico global.
+
+O processo **reference (Go)** implementa:
+
+### Serviços:
+
+| Serviço    | Função                                  |
+|------------|-------------------------------------------|
+| `rank`     | servidor envia seu rank e endereço         |
+| `list`     | retorna lista de servidores ativos         |
+| `heartbeat`| servidores avisam que estão vivos          |
+
+### Métodos implementados:
+
+- Registro de novos servidores  
+- Atualização automática de `last_seen`  
+- Remoção de servidores inativos  
+- Armazenamento de `addr + rank`  
+
+### Trecho real do código (conforme solicitado):
+<img width="438" height="140" alt="image" src="https://github.com/user-attachments/assets/5e110551-4838-45e2-99c3-864887dfeb0a" />
+
+## 🗄 Persistência
+
+Cada servidor mantém seus dados salvos em disco, garantindo que informações importantes não sejam perdidas.
+
+<img width="247" height="225" alt="image" src="https://github.com/user-attachments/assets/21e0287a-c7c4-4a68-be04-464a279a9b7b" />
+
+### Dados armazenados:
 
 - Mensagens de canais  
 - Mensagens privadas  
@@ -78,106 +178,75 @@ Com:
 
 ---
 
-## 🔁 Método de Replicação entre Servidores
-**Método Escolhido: Replicação via Difusão (Broadcast) usando PUB/SUB**<br>
-Para distribuir as mensagens entre todos os servidores, o sistema utiliza um Proxy PUB/SUB do ZeroMQ (XSUB/XPUB).<br>
-A estratégia adotada é um modelo de replicação ativa, no qual cada servidor recebe e aplica todas as mensagens, mantendo uma cópia completa do estado.<br>
+## Consistência e Replicação
 
-**Fluxo:**
+### Problema
 
-Um cliente ou bot envia uma mensagem para qualquer servidor usando REQ/REP.<br>
-O servidor que recebeu a requisição publica a mensagem no canal correspondente através do socket PUB conectado ao proxy.<br>
-O Proxy PUB/SUB distribui essa mensagem para todos os servidores conectados via SUB.<br>
-Cada servidor recebe a mesma mensagem, atualiza seu relógio lógico e salva localmente em:<br>
+O broker utiliza **round-robin** para balancear a carga entre os servidores. Consequentemente:
 
-- **data/channels.json**<br>
-- **data/messages.json**<br>
-- **data/users.json**<br>
+- Cada servidor armazena apenas parte das mensagens trocadas.  
+- Se um servidor falhar, parte do histórico é perdida.  
+- Um cliente consultando o histórico em um servidor recebe apenas os dados armazenados localmente.  
 
-Mesmo que um servidor caia e volte, ele possui sua cópia em disco e continuará recebendo as próximas mensagens normalmente.<br>
-
-**Garantia de Ordem (Relógio Lógico de Lamport)**<br>
-
-Como o ZeroMQ não garante ordenação, o sistema utiliza um relógio lógico para ordenar eventos:<br>
-Cada mensagem carrega o campo clock.<br>
-Servidores atualizam seu clock com base no clock recebido.<br>
-A persistência utiliza este clock para garantir ordem causal.<br>
-Isso evita problemas de reordenamento entre réplicas.<br>
-
-**Consistência Obtida**<br>
-
-O sistema implementa:<br>
-✔ Consistência Eventual<br>
-  Todos os servidores recebem todas as publicações e convergem para o mesmo estado.<br>
-✔ Replicação Ativa<br>
-  Todos aplicam a mesma operação — não há servidor “principal” responsável pelo estado.<br>
-✔ Persistência Local<br>
-  Cada servidor salva suas mensagens em disco, garantindo sobrevivência a falhas.<br>
-  
-**Vantagens do Método**
-
-- **Alto desempenho:** ZMQ PUB/SUB é extremamente rápido e leve.
-- **Total descentralização:** qualquer servidor pode publicar.
-- **Tolerância a falhas:** o coordenador pode cair sem perder mensagens.
-- **Implementação simples:** não depende de bancos distribuídos.
-
-**Fluxo resumido:**
-
-1. Cliente → Servidor via REQ/REP  
-2. Servidor publica no Proxy (XSUB)  
-3. Proxy faz fan-out para todos servidores SUB  
-4. Todos atualizam relógio + persistem localmente  
-
->**Garantias:**
-- Consistência eventual  
-- Estado idêntico entre servidores  
-- Total independência do coordenador
-
-**Conclusão**
-O projeto adota replicação ativa via difusão usando PUB/SUB do ZeroMQ, esse método mantém todos os servidores sincronizados.
+**Solução:** todos os servidores devem possuir **uma cópia completa de todos os dados**.
 
 ---
 
-## 👑 Eleição (Bully) + Sincronização Berkeley
-- O maior rank vence a eleição.  
-- Coordenador divulga no tópico `servers`  
-- A cada 10 mensagens → sincronização de relógio físico  
-- `docker stop server_c`  
-- Veja outro servidor ser eleito coordenador.
-  
-<img width="692" height="360" alt="image" src="https://github.com/user-attachments/assets/e33b6228-7dc9-4a2d-95d3-8ebc31e04b13" />
+### Método de Replicação
 
- 
-<img width="698" height="348" alt="image" src="https://github.com/user-attachments/assets/770a3f40-3597-4895-abbc-b748619fdfd0" />
+- **Replicação assíncrona via PUB/SUB** usando ZeroMQ.  
+- Cada servidor possui:
+  - **PUB socket**: publica alterações nos dados (usuários, canais, mensagens).  
+  - **SUB socket**: escuta alterações publicadas pelos outros servidores.  
+- Ao alterar dados localmente, o servidor:
+  1. Atualiza o estado local.  
+  2. Persiste a informação no disco.  
+  3. Publica a alteração no tópico `replicate` com:
+     - **Ação**: `add_user`, `add_channel`, `publish`  
+     - **Payload**: dados relevantes  
+     - **Timestamp** e **relógio lógico (clock)**  
 
- 
-<img width="1231" height="351" alt="image" src="https://github.com/user-attachments/assets/76655699-540e-46ac-ad59-1b0b87914254" />
+- Os servidores ouvintes aplicam a alteração e persistem localmente, garantindo que todos tenham **cópia completa e atualizada**.
 
- 
-<img width="1324" height="333" alt="image" src="https://github.com/user-attachments/assets/a7a57ac8-bbdd-4aaf-b06f-4190fa888424" />
+---
 
+### Consistência
 
+- A replicação é **assíncrona**, não bloqueia operações.  
+- Cada alteração inclui um **relógio lógico**, garantindo a ordem parcial dos eventos.  
+- O coordenador fornece sincronização de relógios via algoritmo de **Berkeley**, alinhando timestamps.  
+- Garante **eventual consistency**: todos os servidores eventualmente possuem o mesmo estado.
 
-<img width="1181" height="160" alt="image" src="https://github.com/user-attachments/assets/55238dc1-1ea8-49be-adc9-594b024a5b83" />
+---
+
+### Troca de Mensagens entre Servidores
+
+1. Um servidor recebe uma alteração local.  
+2. Publica a alteração no tópico `replicate`.  
+3. Todos os servidores inscritos recebem a mensagem, aplicam a alteração e persistem.  
+4. Opcionalmente, o coordenador sincroniza clocks para manter consistência temporal.  
+
+**Resultado:** cada servidor mantém o histórico completo de usuários, canais e mensagens, evitando perda de dados e permitindo que qualquer servidor responda a consultas de clientes com dados completos.
+
+---
+
+### Replicação Multidirecional
+
+<img width="1418" height="523" alt="Replicação Multidirecional" src="https://github.com/user-attachments/assets/dfd5233b-b4a5-4509-bc06-9858bd46cdda" />
+
+---
 
 ## 🚀 Como Executar
 
-//Construir o ambiente<br>
-docker-compose build
-
-//Subir os contêineres<br>
-docker-compose up
-
-
-
-## 🖥 Acessar Cliente
-
-docker exec -it client bash ou<br>
-docker compose run --rm client<br>
-node client.js<br>
----
-
-## 💻 Comandos do Cliente
+### **1. Clone o repositório**
+- git clone https://github.com/deehdev/ProjetoSD
+- cd SEU_REPO
+### **2. Inicie tudo**
+- docker-compose up --build
+### **3. Abra clientes interativos**
+- docker exec -it client /bin/sh
+- node client.js
+### **4. Comandos do cliente**
 
 | Comando                 | Função                                |
 |-------------------------|----------------------------------------|
@@ -188,6 +257,10 @@ node client.js<br>
 | `subscribe <topico>`    | Inscreve no canal                      |
 | `publish <canal> <msg>` | Publica uma mensagem em um canal       |
 | `message <user> <msg>`  | Envia uma mensagem privada a um usuário |
+
+## 📚 Exemplo de Execução
+
+### **Cliente:**
 
  **Login**
  
@@ -213,85 +286,52 @@ node client.js<br>
 
 <img width="560" height="364" alt="image" src="https://github.com/user-attachments/assets/0194224e-8709-4c93-8b09-e2a7870b02db" />
 
+
+## 👑 Exemplo de Eleição 
+
+<img width="692" height="360" alt="image" src="https://github.com/user-attachments/assets/e33b6228-7dc9-4a2d-95d3-8ebc31e04b13" />
+
+ 
+<img width="698" height="348" alt="image" src="https://github.com/user-attachments/assets/770a3f40-3597-4895-abbc-b748619fdfd0" />
+
+ 
+<img width="1231" height="351" alt="image" src="https://github.com/user-attachments/assets/76655699-540e-46ac-ad59-1b0b87914254" />
+
+ 
+<img width="1324" height="333" alt="image" src="https://github.com/user-attachments/assets/a7a57ac8-bbdd-4aaf-b06f-4190fa888424" />
+
+<img width="1181" height="160" alt="image" src="https://github.com/user-attachments/assets/55238dc1-1ea8-49be-adc9-594b024a5b83" />
+
+## 🧪 Testes Incluídos
+
+- Conexão múltipla de clientes
+- Envio simultâneo de mensagens
+- Falha de servidor + recuperação via replicação
+- Mensagens auto-geradas dos bots
+
+## 📄 Caminhos de Código
+
+<img width="652" height="291" alt="image" src="https://github.com/user-attachments/assets/137194a6-02f6-47b6-960c-207f1a96f0ff" />
+
 ---
 
-## 🔍 Ver Logs dos Servidores
-
-```bash
-# Construir o ambiente
-docker-compose build
-
-# Subir os contêineres
-docker-compose up
-
-# 🔍 Ver Logs dos Servidores
-
-
-// Construir o ambiente
-docker-compose build
-
-// Subir os contêineres
-docker-compose up
-
-
-## 🤖 Bots Automáticos
-
-**O que fazem os bots:**
-- Criam um usuário aleatório  
-- Escolhem um canal  
-- Enviam mensagens aleatórias  
-- Recebem mensagens públicas e privadas
-
-
-## 🧩 Servidor de Referência (Go)
-
-**Funções do servidor de referência:**
-
-- Armazena:
-  - nomes dos servidores
-  - endereços
-  - ranks
-- Entrega rank ao servidor  
-- Monitora heartbeat  
-- Expira servidores inativos  
-- Fornece lista de ranks  
-- Elege o coordenador  
-
-  
-## ⏱ Relógio Lógico (Lamport)
-
-"clock": <contador lógico>
-
-**Regras:**
-- Antes de enviar → `clock++`  
-- Ao receber → `clock = max(local, recebido) + 1`
-
-**Garantias:**
-✔ Ordenação causal  
-✔ Replicações consistentes  
-✔ Logs persistidos na mesma ordem em todos os servidores
-
-
-## 🕒 Sincronização do Relógio Físico (Algoritmo de Berkeley)
-
-- O coordenador consulta outros servidores  
-- Calcula média dos desvios  
-- Envia ajustes  
-- Sincroniza a cada 10 mensagens  
-- Se coordenador falhar → eleição ocorre.
-
-
 ## 👤 Autor: Deise Adriana Silva Araújo
-
-Projeto desenvolvido para a disciplina  
-CC7261 — Sistemas Distribuídos  
-Entregue como solução completa das Partes 1 a 5.
+**Projeto de Sistemas Distribuídos**<br>
+**Professor:** Leonardo Anjoleto
+**Disciplina:**  CC7261 - Sistemas Distribuídos<br>
+**Instituição:** FEI – Fundação Educacional Inaciana Padre Sabóia de Medeiros<br>
 
 ---
 
 ## 🤝 Contribuição
 
-Contribuições são bem-vindas!  
+Este projeto demonstra de forma prática os conceitos de sistemas distribuídos:<br>
+comunicação em tempo real, replicação de dados, sincronização de relógios, tolerância a falhas e coordenação entre servidores.<br>
+Ele serve como base para estudo, experimentação e expansão de sistemas distribuídos confiáveis.<br>
+
+**Contribuições são bem-vindas! Se quiser colaborar, melhorar ou expandir funcionalidades do projeto, fique à vontade para abrir issues ou pull requests."**
+
+
 
 
 
