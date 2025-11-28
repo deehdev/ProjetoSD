@@ -159,7 +159,7 @@ O processo **reference (Go)** implementa:
 - Remoção de servidores inativos  
 - Armazenamento de `addr + rank`  
 
-### Trecho real do código (conforme solicitado):
+### Trecho real do código:
 <img width="438" height="140" alt="image" src="https://github.com/user-attachments/assets/5e110551-4838-45e2-99c3-864887dfeb0a" />
 
 ## 🗄 Persistência
